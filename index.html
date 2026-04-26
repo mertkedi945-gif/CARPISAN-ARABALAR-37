@@ -1,0 +1,309 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>3 Araba Savaşı - Adaletli Versiyon</title>
+    <style>
+        body { margin: 0; overflow: hidden; background: #1a1a1a; font-family: 'Segoe UI', sans-serif; color: white; user-select: none; }
+        canvas { display: block; background: #2c3e50; margin: 0 auto; }
+        #ui { position: absolute; top: 10px; left: 10px; background: rgba(0,0,0,0.8); padding: 15px; border-radius: 10px; pointer-events: none; border: 1px solid #555; z-index: 10; }
+        #upgrade-menu { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); background: #34495e; padding: 30px; border-radius: 20px; display: none; text-align: center; border: 5px solid #f1c40f; z-index: 100; max-height: 80vh; overflow-y: auto; }
+        #event-banner { position: absolute; top: 20%; left: 50%; transform: translateX(-50%); background: #f1c40f; color: black; padding: 20px 40px; border-radius: 15px; font-size: 32px; font-weight: bold; display: none; box-shadow: 0 0 30px rgba(241, 196, 15, 0.5); z-index: 50; border: 4px solid white; }
+        button { padding: 12px 24px; margin: 10px; cursor: pointer; background: #27ae60; border: none; color: white; font-weight: bold; border-radius: 5px; transition: 0.2s; }
+        button:hover { background: #2ecc71; transform: scale(1.05); }
+        .player-card { margin: 10px; padding: 10px; border-bottom: 1px solid #7f8c8d; }
+    </style>
+</head>
+<body>
+
+    <div id="event-banner">MOD SEÇİLİYOR...</div>
+
+    <div id="ui">
+        <div id="p1-info" style="color: #ff4757; font-weight: bold;">P1: Can 100 | Para 0</div>
+        <div id="p2-info" style="color: #2e86de; font-weight: bold;">P2: Can 100 | Para 0</div>
+        <div id="p3-info" style="color: #2ecc71; font-weight: bold;">P3: Can 100 | Para 0</div>
+        <div id="round-info" style="margin-top: 10px; color: #f1c40f;">Tur: 1 | Mod: Normal</div>
+    </div>
+
+    <div id="upgrade-menu">
+        <h1 id="winner-text">TUR BİTTİ!</h1>
+        <div id="upgrade-options"></div>
+        <button onclick="nextRound()" style="background: #e67e22; font-size: 20px;">Sıradaki Tura Başla!</button>
+    </div>
+
+    <canvas id="gameCanvas"></canvas>
+
+<script>
+const canvas = document.getElementById('gameCanvas');
+const ctx = canvas.getContext('2d');
+const upgradeMenu = document.getElementById('upgrade-menu');
+const eventBanner = document.getElementById('event-banner');
+
+canvas.width = window.innerWidth;
+canvas.height = window.innerHeight;
+
+let gameRunning = true;
+let totalRounds = 1;
+let currentMode = "Normal"; 
+let lootBoxes = [];
+let activeItems = [];
+let deathOrder = []; // Elenme sırasını tutar
+const keys = {};
+let mousePos = { x: 0, y: 0 };
+
+window.addEventListener('keydown', (e) => keys[e.code] = true);
+window.addEventListener('keyup', (e) => keys[e.code] = false);
+window.addEventListener('mousemove', (e) => { mousePos.x = e.clientX; mousePos.y = e.clientY; });
+
+class Araba {
+    constructor(id, x, y, color) {
+        this.id = id;
+        this.startX = x; this.startY = y;
+        this.x = x; this.y = y;
+        this.color = color;
+        this.w = 70; this.h = 40;
+        this.angle = 0;
+        this.speed = 4;
+        this.velX = 0; this.velY = 0;
+        this.hp = 100; this.maxHp = 100;
+        this.money = 0;
+        this.shield = false;
+        this.isJuggernaut = false;
+        this.shieldTimer = 0;
+        this.stunTimer = 0;
+        this.isDead = false;
+    }
+
+    draw() {
+        if (this.hp <= 0) return;
+        ctx.save();
+        ctx.translate(this.x, this.y);
+        ctx.rotate(this.angle);
+        let scale = this.isJuggernaut ? 1.8 : 1;
+        ctx.scale(scale, scale);
+
+        ctx.fillStyle = this.color;
+        ctx.fillRect(-this.w/2, -this.h/2, this.w, this.h);
+        ctx.strokeStyle = this.isJuggernaut ? "gold" : "#000";
+        ctx.lineWidth = 2;
+        ctx.strokeRect(-this.w/2, -this.h/2, this.w, this.h);
+
+        ctx.fillStyle = "rgba(0, 0, 0, 0.6)";
+        ctx.fillRect(this.w/8, -this.h * 0.35, this.w/4, this.h * 0.7);
+
+        ctx.fillStyle = "#f1c40f";
+        ctx.fillRect(this.w/2 - 5, -this.h/2 + 5, 8, 10);
+        ctx.fillRect(this.w/2 - 5, this.h/2 - 15, 8, 10);
+
+        if (this.shield) {
+            ctx.beginPath(); ctx.strokeStyle = '#00fbff'; ctx.lineWidth = 3;
+            ctx.arc(0, 0, 45, 0, Math.PI * 2); ctx.stroke();
+        }
+        ctx.restore();
+
+        ctx.fillStyle = "black";
+        ctx.fillRect(this.x - 25, this.y - 45, 50, 6);
+        ctx.fillStyle = this.hp > (this.maxHp * 0.3) ? this.color : "red";
+        ctx.fillRect(this.x - 25, this.y - 45, (Math.max(0, this.hp) / this.maxHp) * 50, 6);
+    }
+
+    update() {
+        if (!gameRunning || this.hp <= 0) {
+            if (this.hp <= 0 && !this.isDead) {
+                this.isDead = true;
+                deathOrder.push(this.id);
+            }
+            return;
+        }
+        
+        if (this.stunTimer > 0) {
+            this.angle += 0.2; this.x += Math.cos(this.angle) * 2; this.y += Math.sin(this.angle) * 2;
+            this.stunTimer--; return;
+        }
+
+        let currentSpeed = this.speed;
+        if (currentMode === "Nitro") currentSpeed *= 1.7;
+        if (this.isJuggernaut) currentSpeed *= 0.85;
+
+        let moveDir = 0; let turnDir = 0;
+        if (this.id === 1) {
+            if (keys['KeyW']) moveDir = 1; if (keys['KeyS']) moveDir = -1;
+            if (keys['KeyA']) turnDir = -1; if (keys['KeyD']) turnDir = 1;
+        } else if (this.id === 2) {
+            if (keys['ArrowUp']) moveDir = 1; if (keys['ArrowDown']) moveDir = -1;
+            if (keys['ArrowLeft']) turnDir = -1; if (keys['ArrowRight']) turnDir = 1;
+        } else if (this.id === 3) {
+            let dx = mousePos.x - this.x; let dy = mousePos.y - this.y;
+            this.angle = Math.atan2(dy, dx);
+            if (Math.hypot(dx, dy) > 40) moveDir = 1;
+        }
+
+        this.angle += turnDir * 0.07;
+        if (currentMode === "Slippery") {
+            this.velX += Math.cos(this.angle) * moveDir * 0.15;
+            this.velY += Math.sin(this.angle) * moveDir * 0.15;
+            this.x += this.velX; this.y += this.velY;
+            this.velX *= 0.985; this.velY *= 0.985;
+        } else {
+            this.x += Math.cos(this.angle) * moveDir * currentSpeed;
+            this.y += Math.sin(this.angle) * moveDir * currentSpeed;
+        }
+
+        this.x = Math.max(40, Math.min(canvas.width - 40, this.x));
+        this.y = Math.max(40, Math.min(canvas.height - 40, this.y));
+        if (this.shieldTimer > 0) { this.shieldTimer--; if (this.shieldTimer <= 0) this.shield = false; }
+    }
+}
+
+let players = [
+    new Araba(1, 150, 150, '#ff4757'),
+    new Araba(2, canvas.width - 150, 150, '#2e86de'),
+    new Araba(3, canvas.width / 2, canvas.height - 150, '#2ecc71')
+];
+
+function checkCollisions() {
+    players.forEach((p1, i) => {
+        if (p1.hp <= 0) return;
+        players.forEach((p2, j) => {
+            if (i === j || p2.hp <= 0) return;
+            let dx = p2.x - p1.x; let dy = p2.y - p1.y;
+            let dist = Math.hypot(dx, dy);
+            let collisionDist = (p1.isJuggernaut || p2.isJuggernaut) ? 75 : 55;
+            if (dist < collisionDist) {
+                let angleToTarget = Math.atan2(dy, dx);
+                let angleDiff = Math.abs(p1.angle - angleToTarget);
+                if (angleDiff > Math.PI) angleDiff = Math.PI * 2 - angleDiff;
+                p1.x -= Math.cos(angleToTarget) * 15; p1.y -= Math.sin(angleToTarget) * 15;
+                if (angleDiff < 0.9) { 
+                    if (!p2.shield) {
+                        let dmg = p1.isJuggernaut ? 30 : 15;
+                        p2.hp -= dmg; p1.money += 20;
+                    }
+                } else {
+                    if (!p1.shield) p1.hp -= 5;
+                    if (!p2.shield) p2.hp -= 5;
+                }
+            }
+        });
+        lootBoxes = lootBoxes.filter(box => {
+            if (Math.hypot(p1.x - box.x, p1.y - box.y) < 45) {
+                activeItems.push({ x: box.x, y: box.y, type: Math.random() > 0.5 ? 'shield' : 'banana' });
+                return false;
+            }
+            return true;
+        });
+        activeItems = activeItems.filter(item => {
+            if (Math.hypot(p1.x - item.x, p1.y - item.y) < 35) {
+                if (item.type === 'shield') { p1.shield = true; p1.shieldTimer = 500; }
+                else { p1.stunTimer = 70; }
+                return false;
+            }
+            return true;
+        });
+    });
+}
+
+function startSpecialMode() {
+    const modes = ["Juggernaut", "Slippery", "Nitro"];
+    currentMode = modes[Math.floor(Math.random() * modes.length)];
+    eventBanner.style.display = 'block';
+    eventBanner.innerText = "YENİ MOD: " + currentMode.toUpperCase();
+    if (currentMode === "Juggernaut") {
+        let lucky = players[Math.floor(Math.random() * players.length)];
+        lucky.isJuggernaut = true;
+        lucky.hp = 250; lucky.maxHp = 250;
+        eventBanner.innerText += " (P" + lucky.id + " DEV!)";
+    }
+    setTimeout(() => { eventBanner.style.display = 'none'; }, 3000);
+}
+
+function gameLoop() {
+    if (!gameRunning) return;
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    if (currentMode === "Slippery") { ctx.fillStyle = "rgba(173, 216, 230, 0.2)"; ctx.fillRect(0,0,canvas.width,canvas.height); }
+    if (Math.random() < 0.004 && lootBoxes.length < 3) lootBoxes.push({ x: Math.random()*(canvas.width-100)+50, y: Math.random()*(canvas.height-100)+50 });
+    lootBoxes.forEach(box => { ctx.fillStyle = '#e67e22'; ctx.fillRect(box.x-15, box.y-15, 30, 30); ctx.fillStyle="white"; ctx.fillText("?", box.x-4, box.y+5); });
+    activeItems.forEach(item => { ctx.fillStyle = item.type==='shield' ? '#00fbff':'#f1c40f'; ctx.beginPath(); ctx.arc(item.x, item.y, 10, 0, Math.PI*2); ctx.fill(); });
+
+    players.forEach(p => { p.update(); p.draw(); });
+    checkCollisions();
+    
+    document.getElementById('p1-info').innerText = `P1: Can ${Math.max(0, Math.floor(players[0].hp))}/${players[0].maxHp} | Para: ${players[0].money}`;
+    document.getElementById('p2-info').innerText = `P2: Can ${Math.max(0, Math.floor(players[1].hp))}/${players[1].maxHp} | Para: ${players[1].money}`;
+    document.getElementById('p3-info').innerText = `P3: Can ${Math.max(0, Math.floor(players[2].hp))}/${players[2].maxHp} | Para: ${players[2].money}`;
+    document.getElementById('round-info').innerText = `Tur: ${totalRounds} | Mod: ${currentMode}`;
+
+    if (players.filter(p => p.hp > 0).length <= 1) handleRoundEnd();
+    requestAnimationFrame(gameLoop);
+}
+
+function handleRoundEnd() {
+    gameRunning = false;
+    
+    // Kazananı belirle
+    let winner = players.find(p => p.hp > 0);
+    if (winner && !deathOrder.includes(winner.id)) {
+        deathOrder.push(winner.id);
+    }
+
+    // ADALETLİ PARA DAĞITIMI
+    // deathOrder[0] = 1. ölen (25 Para)
+    // deathOrder[1] = 2. ölen (50 Para)
+    // deathOrder[2] = Kazanan (100 Para)
+    
+    if (deathOrder.length >= 1) {
+        let pFirstDead = players.find(p => p.id === deathOrder[0]);
+        if (pFirstDead) pFirstDead.money += 25;
+    }
+    if (deathOrder.length >= 2) {
+        let pSecondDead = players.find(p => p.id === deathOrder[1]);
+        if (pSecondDead) pSecondDead.money += 50;
+    }
+    if (deathOrder.length >= 3) {
+        let pWinner = players.find(p => p.id === deathOrder[2]);
+        if (pWinner) pWinner.money += 100;
+    }
+
+    showUpgradeMenu(winner);
+}
+
+function showUpgradeMenu(winner) {
+    upgradeMenu.style.display = 'block';
+    document.getElementById('winner-text').innerText = winner ? `OYUNCU ${winner.id} KAZANDI!` : "BERABERE!";
+    const opt = document.getElementById('upgrade-options');
+    opt.innerHTML = players.map((p, i) => `
+        <div class="player-card">
+            <span style="color:${p.color}; font-size: 1.2em;">P${i+1}</span> (${p.money} Para) <br>
+            <button onclick="buy('speed', ${i})">Hız + (30 Para)</button>
+            <button onclick="buy('maxhp', ${i})">Maks Can +20 (40 Para)</button>
+        </div>`).join("");
+}
+
+window.buy = (type, i) => {
+    let p = players[i];
+    if (type === 'speed' && p.money >= 30) { p.speed += 0.5; p.money -= 30; }
+    if (type === 'maxhp' && p.money >= 40) { 
+        p.maxHp += 20; 
+        p.hp = p.maxHp; // Canı da fulle
+        p.money -= 40; 
+    }
+    showUpgradeMenu(players.find(pl => pl.hp > 0));
+};
+
+function nextRound() {
+    totalRounds++;
+    currentMode = "Normal";
+    lootBoxes = []; activeItems = []; deathOrder = [];
+    players.forEach((p, i) => { 
+        p.isDead = false; p.hp = p.maxHp; p.isJuggernaut = false; p.stunTimer = 0; p.velX = 0; p.velY = 0; p.shield = false;
+        if(i==0){p.x=150; p.y=150; p.angle=0} else if(i==1){p.x=canvas.width-150; p.y=150; p.angle=Math.PI} else {p.x=canvas.width/2; p.y=canvas.height-150; p.angle=-Math.PI/2}
+    });
+    if (totalRounds % 5 === 0) startSpecialMode();
+    upgradeMenu.style.display = 'none'; gameRunning = true; gameLoop();
+}
+
+gameLoop();
+</script>
+</body>
+</html>
